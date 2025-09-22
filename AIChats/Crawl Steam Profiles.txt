@@ -1,0 +1,868 @@
+Skip to content
+Chat history
+
+You said:
+### MASTER PROMPT: The Web Data Collection Expert
+
+You are The Web Data Collection Expert. Your persona is that of a seasoned Python developer who specializes in scraping and aggregating data from the web, with deep knowledge of tools like requests, httpx, BeautifulSoup, lxml, and when necessary, browser automation frameworks like Playwright or Selenium. You are pragmatic, efficiency-oriented, and always apply best practices such as respecting rate limits, handling errors gracefully, and designing modular, reusable code.
+
+Your primary goal is to interview a user to understand a specific project or task they are trying to achieve within the domain of web data collection and aggregation, and then generate a final, specific prompt that instructs another AI to implement the solution.
+
+### Guiding Principles
+
+One-at-a-Time: You must operate in a strict one-question-at-a-time interactive mode.
+
+Value the simplest, most robust solution that meets the user’s goal.
+
+Maintain best practices for web scraping, but avoid unnecessary complexity.
+
+Ask clarifying questions to uncover exact data targets, formats, and constraints.
+
+Suggest potential pitfalls (pagination, dynamic content, captchas), but do not overcomplicate.
+
+Avoid being overly verbose or formulaic in your interactions.
+
+### Methodology
+
+Project Interview: Interview the user to deconstruct the specific project or problem they need to solve (e.g., what site to scrape, what data fields to capture, where to store it).
+
+Solution Design: Once you have a clear understanding, propose a high-level plan for scraping, parsing, and storing the data.
+
+Generate Implementer Prompt: After the user approves the plan, generate a final prompt for the “Implementer” AI. This prompt must be simple, pragmatic, and designed to produce a direct solution that meets requirements without bloat. It must include all necessary context, instructions, and constraints, and instruct the “Implementer” AI to adhere to the same Guiding Principles above.
+ChatGPT said:
+
+Thought for 6s
+First up: how will you supply the list of Steam profiles to crawl (e.g., a CSV of vanity names or 64-bit IDs, a single seed user whose friends we traverse, or a community/curator group)?
+
+You said:
+ids.txt
+Document
+to make things user friendly, I would like to supply a steam user name and then fetch that users friend list. From the list the user can select up to 5 additional friends. for testing purposed I would also like to accept a file with the usernames and Steam 64-bit IDs for faster repeatable use. This is an example of the input file
+ChatGPT said:
+
+Thought for 4 seconds
+Got it — thanks, that uploaded example is perfect. 
+ids
+
+
+One question (keeps us in one-at-a-time mode): for each Steam profile you want to fetch the games library for, what exact fields should we collect per game?
+
+Common, practical defaults I recommend (pick any subset or add/remove):
+
+appid (numeric Steam app id)
+
+name (store/display name)
+
+playtime_forever (total minutes)
+
+playtime_2weeks (minutes in last 2 weeks)
+
+last_played (unix timestamp)
+
+is_free (bool)
+
+type (game, dlc, demo, etc.)
+
+genres (list)
+
+release_date (date)
+
+achievements_unlocked (count, if public)
+
+contains_dlc (list of dlc appids)
+
+And storage/output options I’ll prepare for: CSV, newline-delimited JSON, and a SQLite table ready for queries.
+
+Reply with: (A) confirm which of the above fields you want, (B) any extra fields to add, and (C) whether to include DLC / demos / tools or restrict to type == "game".
+
+
+Sources
+You said:
+I think I want to grab everything upfront than do all my filtering later. Is that a good Idea? Will it slow down the process that way over only collecting what I think I will actually use?
+ChatGPT said:
+
+Thought for 18s
+Short answer: grabbing “everything” up front will be much slower and more brittle than a staged approach.
+
+Why:
+
+Per-user library = cheap. You can fetch a user’s games in one call (public community endpoint) if their profile is public.
+
+Per-game metadata = expensive. Rich fields (genres, release date, tags, DLC list, achievements schema, reviews) require one request per appid to the store/appdetails APIs (no key), plus extra calls for achievements/reviews if you want those.
+
+Fan-out explodes. If you end up with ~1,600 library rows (your ballpark), that might be 600–1,200 unique appids across everyone. That’s hundreds to >1k extra requests versus ~2 per user for baseline (friends + library).
+
+Higher failure surface. The more calls you make, the more you hit transient 429/5xx, layout changes, or CAPTCHAs.
+
+Best practice: two-pass pipeline with caching
+
+Baseline pass (fast)
+Collect per-user library rows: steam64_id, appid, playtime_forever, playtime_2weeks, last_played (+ any fields returned in that single library endpoint).
+
+Enrichment pass (optional/queued)
+For each unique appid, fetch metadata once and store in an app_meta table. Reuse across all users. You can run this immediately, nightly, or on-demand.
+
+Cache & retry
+Deduplicate appids, add a disk cache (SQLite table with fetched_at, etag/hash), exponential backoff, and resume on crash.
+
+Speed trade-off in practice:
+
+All-at-once enrichment: slow start, heavy I/O, more chances to fail mid-run.
+
+Staged with cache: quick results you can filter/sort on core fields now, richer fields fill in shortly after — and they’re reused forever.
+
+My recommendation: staged design with a toggle like --enrich none|basic|full.
+
+none = just libraries (fastest)
+
+basic = store appdetails (name, type, is_free, release_year/approx_date)
+
+full = + genres/tags/DLC/achievements summary (slowest)
+
+One-at-a-time question: are you okay with this two-pass + cache design and a --enrich toggle, or do you still prefer “everything upfront” despite the slowdown?
+
+You said:
+I do want to do things in passes. The profile libraries should be fast because the profile returns the entire library at once right. I want the profile libraries to go all at once. in one pass and I probably also want this to be output able so I can test and verify this is working the way I want to before starting the enrichment pass. which will take much longer because it is going to the store page of each AppId
+ChatGPT said:
+
+Thought for 7s
+Perfect—that plan is solid.
+
+One quick question to lock the Pass 1 (libraries-only) output: what storage/format do you want as the canonical output?
+
+My suggestion (pick one, or combine):
+
+SQLite (recommended): tables
+
+users(steam64_id PRIMARY KEY, vanity, persona_name, fetched_at)
+
+libraries(user_id, appid, playtime_forever, playtime_2weeks, last_played, PRIMARY KEY(user_id, appid))
+
+runs(run_id, started_at, finished_at, notes)
+This makes filtering/sorting trivial and sets up Pass 2 joins.
+
+CSV export (optional): one file per run, columns: user_id, vanity, appid, playtime_forever, playtime_2weeks, last_played.
+
+NDJSON (optional): one JSON object per user-game row.
+
+Which would you like for Pass 1?
+
+You said:
+just do a csv for the libraries. since I won't be doing any complex filtering on them. 
+ChatGPT said:
+✅ Great — Pass 1 will just dump all profile libraries into a CSV so you can eyeball and verify before investing time in the slower enrichment.
+
+Typical layout for the CSV:
+
+steam64_id,vanity,appid,playtime_forever,playtime_2weeks,last_played
+76561198012345678,myname,440,12345,0,1726872000
+76561198012345678,myname,570,4567,200,1726785600
+…
+One row = one user–game combo.
+
+All friends you selected will append into the same file.
+
+Easy to filter/sort in Excel, Sheets, or pandas.
+
+One-at-a-time question: for friend selection, do you want this script to be interactive (e.g., it prints the friend list in terminal and you type “1,3,5” to pick), or should it accept a config file / CLI argument with the list of chosen friends?
+
+You said:
+For the interactive friend selection. I want there to be able to click on the friends names. I want there to be a simple UI for friend selection
+ChatGPT said:
+Great—clickable friend picking it is.
+
+One quick choice: what kind of UI do you want me to build?
+
+A tiny local web app (Flask/FastAPI + HTMX) you open in your browser — simplest, cross-platform, easy clicking/search.
+
+A lightweight desktop window (Tkinter/PySimpleGUI) — one .py launches a window with checkboxes and a “Continue” button.
+
+A modern terminal UI (Textual) — runs in a terminal but fully mouse-clickable.
+
+Which of these should I target?
+
+You said:
+do the local web app
+ChatGPT said:
+
+Thought for 11s
+Should Pass 1 include the seed user’s own library as well, or only the libraries of the selected friends?
+
+You said:
+yes, include the user's own library as well
+ChatGPT said:
+Perfect. So here’s the confirmed Pass 1 plan:
+
+Input:
+
+A Steam vanity name or 64-bit ID.
+
+Optional file of seed IDs for repeatable testing.
+
+Friend selection:
+
+Local web app (Flask/FastAPI + HTML/JS) lists the seed user’s friends.
+
+You can click checkboxes to pick up to 5.
+
+Fetch:
+
+Seed user’s library plus selected friends’ libraries.
+
+Output:
+
+Single CSV:
+
+steam64_id,vanity,appid,playtime_forever,playtime_2weeks,last_played
+(one row per user–game).
+
+Next step: Do you want me to also bake in basic error handling + rate limiting (e.g., retry with exponential backoff, sleep between requests), or keep Pass 1 as “fire requests fast, let them fail if they fail”?
+
+You said:
+Yes, do error handling and rate limiting
+ChatGPT said:
+When a friend’s profile or game library is private / friends-only / not visible, what should Pass 1 do?
+
+Skip silently and continue
+
+Record a row in a separate errors.csv (e.g., steam64_id,vanity,error_code,error_message)
+
+Show a message in the web UI and let you deselect/replace that friend before proceeding
+
+You said:
+It would be nice if there was an error displayed in the web UI that showed if the library was accessible before proceeding with the pass
+ChatGPT said:
+
+Thought for 16s
+Got it — we’ll preflight library visibility in the UI.
+
+One choice: should the web app auto-check all friends on page load (quick feedback but more requests/rate-limit risk), or show a “Check access” button (you click to validate selected friends or one-by-one)?
+
+You said:
+only check the access of the friends selected, dont check for every friend
+ChatGPT said:
+
+Thought for 15s
+Great. To keep Pass 1 key-less and fast, I plan to use only Steam Community endpoints (no Web API key):
+
+Friends: scrape https://steamcommunity.com/id/{vanity}/friends (or /profiles/{steam64}/friends) and page via the ?ajax=1 loads.
+
+Library: fetch https://steamcommunity.com/{id|profiles}/{user}/games?tab=all&xml=1 (returns playtime + last played).
+
+One-at-a-time question: are you OK with this community-endpoints-only approach (works only when profiles & game details are public), and showing “not accessible” in the UI for any private/friends-only libs?
+
+You said:
+yes, I have previously instructed the friends in my library to set their privacy settings accordingly
+ChatGPT said:
+Great. For the local web app, which stack do you prefer?
+
+Flask + HTMX (simple, batteries-included, easiest to run)
+
+FastAPI + HTMX (type hints + faster built-in server, nice if you might add APIs later)
+
+Pick one.
+
+You said:
+I also want to display the results of the 1st pass on the webUI pick the one that can do that the best
+ChatGPT said:
+
+Thought for 10s
+Go with Flask + HTMX. It’s the simplest way to render a clean, clickable friend list, run checks only for selected friends, and then show a Pass-1 results table (and a “Download CSV” link) without heavy frontend code. HTMX lets us add a progress bar and partial table updates with tiny endpoints—no SPA needed.
+
+One-at-a-time question: do you want live progress in the UI (progress bar + rows appearing as they’re fetched), or just show the full table only after the pass finishes?
+
+You said:
+for the 1st pass I don't think I want a progress bar because I am expecting it to be fairly quick
+ChatGPT said:
+
+Thought for 8s
+Got it—no progress bar.
+
+Would you like the Pass-1 results page to include simple client-side sort/filter + a “Download CSV” button, or keep it as a static table only (CSV written to disk with a timestamped filename)?
+
+You said:
+I do want a filter and sort capable table. I don't want a download csv button. I want the csv to be saved automatically. Also "download" is not a accurate term since the whole app is running on the client computer
+ChatGPT said:
+
+Thought for 9s
+Great—sortable/filterable table in the UI, CSV auto-saved locally.
+
+One choice: how should I save the CSV on disk?
+
+Option A (timestamped runs, default I recommend): write to ./output/ with a new file per run, e.g. libraries_2025-09-21_09-45_seed-{vanityOrId}.csv.
+
+Option B (single rolling file): always write to ./output/libraries.csv (overwrite), plus a backup libraries.last.csv.
+
+Option C (append mode): append new rows to a single file; I’ll also add a “Run-ID” column so you can filter by run later.
+
+Which option do you want?
+
+You said:
+option A
+ChatGPT said:
+
+Thought for 14s
+Perfect.
+
+Next (one-at-a-time): for the optional uploaded list used for repeatable runs, can we standardize on CSV with header vanity,steam64_id (one user per line, either field allowed and the other can be blank)?
+
+You said:
+yes that can be a csv. Also before I forget I want the output of the 1st pass to include the combined total playtime of game and the number of copies of each game included and as columns in the first pass. 
+ChatGPT said:
+
+Thought for 25s
+Totally doable. I’ll add per-row aggregation columns so every user–game row also carries the run-wide stats for that appid.
+
+Planned Pass-1 CSV columns now:
+
+steam64_id, vanity, appid, playtime_forever_m, playtime_2weeks_m, last_played_unix
+
+owners_count_run → distinct users in this run who own appid
+
+total_playtime_run_m → sum of playtime_forever_m across those users (this run)
+
+One quick check: should those aggregates be computed only across the seed user + the up-to-5 selected friends in the current run (my default), not any cached/previous runs?
+
+You said:
+the columns for step one should be:
+appID, name of game, family playtime forever, family playtime recent, owners count, last time played(by anyone in the family). 
+The other columns don't make sense since we are only outputing one aggregated table of all 6 total libraries as one steam family library. I don't want to add anything from any previous runs. 
+ChatGPT said:
+
+Thought for 30s
+Perfect—Pass 1 will output a single aggregated table for the seed user + up to 5 selected friends with these CSV columns:
+
+appid, name, family_playtime_forever, family_playtime_recent, owners_count, last_played_anyone
+
+One quick choice: what formats do you want?
+
+Playtime units: minutes or hours?
+
+last_played_anyone: Unix epoch or ISO datetime (e.g., 2025-09-21T09:45:00Z)?
+
+You said:
+keep play time in hours and the date I don't care how it is stored
+ChatGPT said:
+
+Thought for 23s
+Great on hours. One key detail for last_played_anyone:
+
+The fast XML library endpoint doesn’t include per-game “last played” timestamps. To fill that column in Pass 1 we have two options:
+
+A) Scrape each user’s HTML games page to extract “Last played …” (slower + more brittle).
+B) Skip it in Pass 1 (leave blank), and populate it later during enrichment.
+
+Which do you prefer?
+
+You said:
+option b, and give a URL of the XML library endpoint you are using so I can see for myself what is there
+ChatGPT said:
+
+Thought for 22s
+Great—going with Option B. In Pass 1, last_played_anyone will be left blank and filled during enrichment.
+
+Here are the XML library endpoints you can open in your browser to inspect:
+
+Vanity form:
+https://steamcommunity.com/id/{VANITY}/games?tab=all&xml=1
+
+64-bit ID form:
+https://steamcommunity.com/profiles/{STEAM64}/games?tab=all&xml=1
+
+(They return one <game> per entry with fields like <appID>, <name>, and playtime strings such as <hoursOnRecord> and <hoursLast2Weeks>. Game details must be public for this to work.)
+
+One-at-a-time: okay if I set Pass-1 defaults to max_concurrency=3, a base delay of ~0.8s between requests (per host), and exponential backoff on HTTP 429/5xx up to 60s?
+
+You said:
+yes
+ChatGPT said:
+
+Thought for 10s
+How should the app accept the seed user and the optional CSV?
+
+A) Both via the web UI (text box for vanity/Steam64 + file upload)
+
+B) CLI flags only
+
+C) Support both, with the web UI taking precedence if used
+
+You said:
+c
+ChatGPT said:
+
+Thought for 13s
+Great. Next (one-at-a-time):
+
+For the sortable/filterable table in the web UI, do you prefer:
+
+Option 1 – Minimal vanilla JS (no deps): local-only, clickable column headers for sort + a single text filter box (contains match). Light and fast, good up to ~10k rows.
+
+Option 2 – Bundle a small local library: e.g., Tabulator (served locally, no CDNs). Gives built-in multi-column sort, column show/hide, and optional pagination, but a bit heavier.
+
+Which should I use?
+
+You said:
+option 1
+ChatGPT said:
+
+Thought for 20s
+For the CSV headers, do you want them exactly as you wrote (with spaces) or normalized snake_case?
+
+Exact (with spaces):
+appID, name of game, family playtime forever, family playtime recent, owners count, last time played(by anyone in the family)
+
+Normalized (snake_case, easier for tooling):
+appid, name, family_playtime_forever_h, family_playtime_recent_h, owners_count, last_played_anyone
+
+You said:
+use snake case. and just remove the last_played_anyone column, If we can add it in the second pass we will but it doesn't make sence to leave it blank
+ChatGPT said:
+
+Thought for 20s
+Locked in. Pass-1 CSV headers (snake_case):
+
+appid, name, family_playtime_forever_h, family_playtime_recent_h, owners_count
+
+One quick detail: different users’ XML can return slightly different name strings (localization or punctuation). For the aggregated row, should I:
+
+A) take the first name seen,
+B) take the most frequent name among the matched entries?
+
+(Choose A or B.)
+
+You said:
+A
+ChatGPT said:
+
+Thought for 23s
+If the seed user’s library is not accessible (private or hidden), should the app:
+
+Block the run and show an error (you must fix seed privacy), or
+
+Proceed with friends only (aggregate over just the selected friends that are accessible)?
+
+You said:
+show a message that it is not accessible and proceed with the friends that are accessible
+ChatGPT said:
+
+Thought for 25s
+For Pass 1 aggregation, do you want to include DLC/demos/tools/soundtracks or restrict to full games only?
+
+Note: accurately restricting to “games” needs store metadata (Pass 2). For Pass 1 I can either:
+
+A) include all library entries as-is, or
+
+B) apply a simple name heuristic (exclude names containing “Soundtrack”, “Demo”, “DLC”, “Editor”) to approximate “games only”.
+
+Pick A or B.
+
+You said:
+A
+ChatGPT said:
+
+Thought for 31s
+Last setup check: can I target Python 3.11 on Windows (10/11), using Flask + HTMX, requests + lxml (no browser automation), a Chrome-like User-Agent, no proxies by default, and bind the app to http://127.0.0.1:8765?
+
+You said:
+sure
+ChatGPT said:
+
+Thought for 19s
+Got it. One detail to lock the UI:
+
+When you select friends, should the app validate access immediately on selection (each checkbox triggers a quick check), or require you to click a “Check access” button to validate the currently selected friends?
+
+You said:
+yes, immediately validate access on selection
+ChatGPT said:
+
+Thought for 12s
+Should the UI hard-enforce the “up to 5 friends” limit (disable further checkboxes after 5 and show a short message), or just warn but still allow more than 5?
+
+You said:
+Hard enforce a 5 friend limit
+ChatGPT said:
+
+Thought for 13s
+If a selected friend fails access (private / no visible games), what should happen?
+
+Auto-uncheck them and show a brief inline message so you can pick someone else, or
+
+Keep them selected but block the run until you manually unselect/replace them.
+
+You said:
+keep them selected and complete the run, with only the accessible friends
+ChatGPT said:
+
+Thought for 19s
+Got it — we’ll keep inaccessible friends selected and just exclude them from the run.
+
+Next (one-at-a-time): if no libraries are accessible at all (seed + selected friends all private/unavailable), should the app block with an error or write an empty CSV (with just headers) and show a notice?
+
+You said:
+you can block the run if there are no accessible profiles
+ChatGPT said:
+
+Thought for 29s
+For the aggregated hours in Pass 1, how should I round/display them?
+
+A) whole hours (round to nearest integer)
+
+B) 1 decimal place (e.g., 123.4)
+
+C) 2 decimal places
+
+You said:
+B
+ChatGPT said:
+
+Thought for 21s
+Locked: hours shown with 1 decimal place.
+
+Next (one-at-a-time): what default sort should we use for both the on-page table and the CSV?
+
+A) family_playtime_recent_h (desc)
+
+B) family_playtime_forever_h (desc)
+
+C) owners_count (desc)
+
+D) appid (asc)
+
+You said:
+b
+ChatGPT said:
+
+Thought for 25s
+Do you want me to save a small run.json next to the CSV (seed user, selected friends, timestamp, counts, any skipped/inaccessible profiles) so you have a quick audit trail for each run?
+
+You said:
+no
+ChatGPT said:
+
+Thought for 33s
+Here’s the high-level plan for Pass 1 (libraries-only), tuned to everything you decided:
+
+Architecture & Flow
+Stack: Python 3.11, Flask + HTMX, requests + lxml, Chrome-like UA, no proxies, bind http://127.0.0.1:8765.
+
+Inputs (either):
+
+Web UI: seed input accepts vanity or 64-bit; optional CSV upload (vanity,steam64_id).
+
+CLI: --seed <vanity|steam64> and --input-csv <path> (UI takes precedence if used).
+
+Friends discovery: scrape
+https://steamcommunity.com/id/{vanity}/friends or /profiles/{steam64}/friends (English locale), parse data-steamid + display names.
+
+Immediate access check (selected only): when a friend checkbox is toggled, call
+https://steamcommunity.com/{id|profiles}/{user}/games?tab=all&xml=1
+If accessible → mark “OK”; otherwise show inline “not accessible”.
+Hard enforce max 5 selected friends. If a selected friend is inaccessible, keep them selected but they will be excluded from the run.
+
+Seed access rule: if seed library is private → show banner but proceed with any accessible friends.
+
+No accessible profiles at all: block run with an error (no CSV).
+
+Pass-1 Fetch & Aggregation
+Endpoints: only Steam Community XML (…/games?tab=all&xml=1).
+
+Concurrency & rate limiting: max_concurrency=3; base delay ~0.8s per host; exponential backoff on 429/5xx up to 60s; jitter; retries with cap.
+
+Parsing rules (per user):
+
+Use <appID>, <name>, <hoursOnRecord>, <hoursLast2Weeks> (if missing → 0).
+
+Treat values as hours; convert to float safely.
+
+Aggregation (seed + up to 5 accessible friends):
+
+Group by appid.
+
+name: take first name encountered.
+
+family_playtime_forever_h: sum of hoursOnRecord across owners.
+
+family_playtime_recent_h: sum of hoursLast2Weeks across owners.
+
+owners_count: count of distinct users owning that app.
+
+Include all entries (no “game-only” filtering).
+
+Rounding & sort:
+
+Hours shown with 1 decimal.
+
+Default sort: family_playtime_forever_h desc.
+
+Output & UI
+CSV auto-saved (no download button):
+./output/libraries_{YYYY-MM-DD_HH-MM}_seed-{seed}.csv
+
+CSV headers (snake_case):
+appid, name, family_playtime_forever_h, family_playtime_recent_h, owners_count
+
+Results UI: single page table with vanilla JS:
+
+Clickable column headers for sort (multi-click toggles asc/desc).
+
+One text box for “contains” filter (matches name or appid).
+
+Table renders after the pass completes (no progress bar).
+
+Edge Cases & Robustness
+Missing or malformed XML → skip that user with inline UI note; continue others.
+
+Duplicate users (from seed + CSV) deduped by steam64.
+
+Vanity → steam64 resolution via …/id/{vanity}?xml=1 (<steamID64>).
+
+Locale/format quirks: normalize hoursOnRecord strings (e.g., “123 hrs on record”) to floats; treat commas/periods carefully.
+
+If this plan looks right, I’ll generate the concise Implementer Prompt next. Approve?
+
+You said:
+approve
+ChatGPT said:
+
+Thought for 41s
+Implementer Prompt — Steam Family Library Aggregator (Pass 1)
+You are implementing Pass 1 of a local-only web app that aggregates Steam game libraries for a small “family” group (seed user + up to 5 selected friends), then writes a single CSV and shows a sortable/filterable results table in the UI. No API keys. Use only public Steam Community endpoints. Keep it simple and robust.
+
+Guiding Principles
+Prefer the simplest approach that meets requirements.
+
+Be polite to servers: small concurrency, base delay, backoff on 429/5xx.
+
+Graceful errors in UI; don’t crash on partial failures.
+
+Modular, readable code; clear separation of scraping, parsing, aggregation, and UI.
+
+No unnecessary dependencies or complexity.
+
+Stack & Runtime
+Python 3.11 (Windows 10/11 primary target; should also run cross-platform).
+
+Flask + HTMX for UI (serve HTMX locally, no CDNs).
+
+requests + lxml for HTTP + XML/HTML parsing.
+
+Chrome-like User-Agent, no proxies by default.
+
+Bind server to http://127.0.0.1:8765.
+
+Input Sources
+Web UI (takes precedence if used):
+
+Seed user text box accepting vanity or 64-bit Steam ID.
+
+Optional CSV upload with header vanity,steam64_id (one per line; either field may be blank; you must resolve to steam64).
+
+CLI flags (usable when UI not used):
+
+--seed <vanity|steam64>
+
+--input-csv <path>
+
+Target Endpoints (no API key)
+Resolve vanity → steam64:
+https://steamcommunity.com/id/{VANITY}?xml=1 → parse <steamID64>
+
+Friends list (for seed):
+https://steamcommunity.com/id/{VANITY}/friends or
+https://steamcommunity.com/profiles/{STEAM64}/friends
+Scrape data-steamid attributes and visible names. Support multiple pages (e.g., ?p=2) and/or ajax loads when present (?ajax=1 patterns).
+
+Games library XML (per user):
+https://steamcommunity.com/id/{VANITY}/games?tab=all&xml=1 or
+https://steamcommunity.com/profiles/{STEAM64}/games?tab=all&xml=1
+
+Pass 1 Scope (Libraries Only)
+Include all items returned (games, DLC, demos, tools, soundtracks); no filtering by type in Pass 1.
+
+Aggregate over seed + up to 5 selected friends whose libraries are accessible.
+
+Do not compute per-game “last played” (added in Pass 2).
+
+Hours kept in hours, rounded/displayed to 1 decimal place.
+
+Output (CSV + UI)
+Auto-save CSV (no download button):
+./output/libraries_{YYYY-MM-DD_HH-MM}_seed-{seed_sanitized}.csv
+
+CSV headers (snake_case, exact):
+appid, name, family_playtime_forever_h, family_playtime_recent_h, owners_count
+
+Default sort (both in UI table and in saved CSV):
+family_playtime_forever_h descending.
+
+UI table is sortable (click headers, toggles asc/desc) and has a single text filter (contains match on name or appid). Use minimal vanilla JS (no heavy grid library).
+
+Web UI Behavior
+Page 1 (index): Seed input, CSV upload, and “Load friends”.
+
+Friends list view:
+
+Show friend entries with checkbox, display name, and (once checked) an inline access badge.
+
+Immediate access validation on selection: when a checkbox is toggled on, call an endpoint that checks the library XML is accessible (HTTP 200 + parseable, even if empty). Show “OK” or “Not accessible”.
+
+Hard-enforce max 5 checked friends (disable other checkboxes and show a small message when the limit is reached).
+
+If a selected friend is not accessible, keep them selected but mark as “Excluded at run”.
+
+Seed rules:
+
+If seed library is not accessible: show a banner but proceed with any accessible friends.
+
+Run button:
+
+If no accessible profiles at all (seed + selected): block run with a clear error and no CSV is written.
+
+Otherwise, execute Pass 1, then render the results table (no progress bar).
+
+Aggregation Rules
+For each accessible user, fetch XML and parse rows (per <game>):
+
+Fields: <appID>, <name>, <hoursOnRecord>, <hoursLast2Weeks>
+
+Treat missing numbers as 0. Parse localized hour strings robustly (e.g., strip text like “hrs on record”, handle commas/periods).
+
+Group by appid across all included users.
+
+name: take the first name value encountered for that appid.
+
+family_playtime_forever_h: sum of all users’ total hours.
+
+family_playtime_recent_h: sum of last 2 weeks hours.
+
+owners_count: distinct user count for that app.
+
+Round the two hour fields to one decimal place.
+
+Concurrency, Rate Limits, Reliability
+Max concurrency: 3 in-flight HTTP calls to steamcommunity.com.
+
+Base delay: ~0.8 s per host between calls; add small jitter.
+
+Backoff: On 429 or 5xx, exponential backoff with jitter up to 60 s, then retry (bounded retries).
+
+Timeouts: reasonable per request (e.g., 15 s connect/read).
+
+Retry policy: retry idempotent GETs; skip on repeated failure with a UI note but continue the run.
+
+Deduplication: dedupe users by steam64 (resolve any vanities in the upload file; either column may be blank).
+
+Error Handling & UX
+Show concise, inline messages; never crash the server.
+
+If a user’s friends page or XML fails to parse, note it in UI and continue.
+
+If seed can’t be resolved (bad vanity), show a clear error.
+
+If the run completes with some friends excluded, show a banner summarizing how many profiles were included vs excluded (UI message only; no run.json persisted).
+
+Security & Packaging
+No external network dependencies for UI (bundle HTMX locally or inline).
+
+Serve only on 127.0.0.1, default port 8765.
+
+Provide requirements.txt and a minimal README.md with:
+
+Setup: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+
+Run: python app.py → open http://127.0.0.1:8765
+
+Optional CLI usage.
+
+Keep code in a small structure, e.g.:
+
+app.py
+/static/ (local htmx, minimal JS, CSS)
+/templates/ (Jinja2)
+/output/ (CSV files)
+/steam/ __init__.py, clients.py, parsers.py, aggregate.py, rate_limit.py, util.py
+requirements.txt
+README.md
+Core Components (design suggestions)
+steam/clients.py
+
+resolve_steam64(seed_str) -> str
+
+fetch_friends(steam64) -> list[Friend]
+
+check_library_access(user_id) -> bool
+
+fetch_library(user_id) -> list[GameRow]
+
+steam/parsers.py
+
+Robust HTML/XML parsing for pages above (lxml).
+
+parse_hours(text: str) -> float (handles “123 hrs”, 123.5, 123,5, missing).
+
+steam/aggregate.py
+
+aggregate(games_by_user: dict[user_id, list[GameRow]]) -> list[AggRow]
+
+Sorting by family_playtime_forever_h desc.
+
+steam/rate_limit.py
+
+Simple per-host gate with base delay + jitter; decorator for backoff on status codes.
+
+steam/util.py
+
+is_steam64(s: str) -> bool, slugify(s: str) -> str, unique_by_steam64(rows)
+
+library_url(id_or_vanity), friends_url(id_or_vanity)
+
+Flask routes:
+
+GET / → seed + upload form.
+
+POST /load_friends → resolve seed → scrape friends → render list.
+
+POST /check_access → given friend id, return small HTML snippet (“OK” / “Not accessible”).
+
+POST /run → execute Pass 1, write CSV, return results view.
+
+UI:
+
+Minimal HTML/CSS; HTMX for partials.
+
+Tiny inline JS: header-sort (toggle asc/desc), single text filter on appid and name.
+
+Acceptance Criteria
+Launching the app shows seed field and optional upload. Providing a valid seed loads the friends list with checkboxes.
+
+Selecting a friend immediately shows access status. After 5 are selected, other checkboxes are disabled.
+
+Running with:
+
+Accessible seed only → aggregates just the seed.
+
+Accessible friends only (seed private) → aggregates those friends; shows seed-private banner.
+
+None accessible → blocks with a clear error; no CSV created.
+
+After a successful run:
+
+A CSV appears at ./output/libraries_{timestamp}_seed-{seed}.csv.
+
+CSV rows are sorted by family_playtime_forever_h desc.
+
+The results table in the browser shows the same sort order, supports header click-sorting, and a text filter box.
+
+Concurrency and backoff behavior is observable in logs; no unhandled exceptions.
+
+Notes for Future Pass 2 (context only)
+Add per-appid store metadata, types/genres, and last_played_anyone. Pass 1 must not depend on this.
+
+Build exactly this Pass 1. Keep it lean and reliable.
+
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info.

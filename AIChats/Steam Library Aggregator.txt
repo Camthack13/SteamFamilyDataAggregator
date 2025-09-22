@@ -1,0 +1,364 @@
+Skip to content
+Chat history
+
+You said:
+Implementer Prompt — Steam Family Library Aggregator (Pass 1)
+
+You are implementing Pass 1 of a local-only web app that aggregates Steam game libraries for a small “family” group (seed user + up to 5 selected friends), then writes a single CSV and shows a sortable/filterable results table in the UI. No API keys. Use only public Steam Community endpoints. Keep it simple and robust.
+
+Guiding Principles
+
+Prefer the simplest approach that meets requirements.
+
+Be polite to servers: small concurrency, base delay, backoff on 429/5xx.
+
+Graceful errors in UI; don’t crash on partial failures.
+
+Modular, readable code; clear separation of scraping, parsing, aggregation, and UI.
+
+No unnecessary dependencies or complexity.
+
+Stack & Runtime
+
+Python 3.11 (Windows 10/11 primary target; should also run cross-platform).
+
+Flask + HTMX for UI (serve HTMX locally, no CDNs).
+
+requests + lxml for HTTP + XML/HTML parsing.
+
+Chrome-like User-Agent, no proxies by default.
+
+Bind server to http://127.0.0.1:8765
+.
+
+Input Sources
+
+Web UI (takes precedence if used):
+
+Seed user text box accepting vanity or 64-bit Steam ID.
+
+Optional CSV upload with header vanity,steam64_id (one per line; either field may be blank; you must resolve to steam64).
+
+CLI flags (usable when UI not used):
+
+--seed <vanity|steam64>
+
+--input-csv <path>
+
+Target Endpoints (no API key)
+
+Resolve vanity → steam64:
+https://steamcommunity.com/id/{VANITY}?xml=1 → parse <steamID64>
+
+Friends list (for seed):
+https://steamcommunity.com/id/{VANITY}/friends or
+https://steamcommunity.com/profiles/{STEAM64}/friends
+Scrape data-steamid attributes and visible names. Support multiple pages (e.g., ?p=2) and/or ajax loads when present (?ajax=1 patterns).
+
+Games library XML (per user):
+https://steamcommunity.com/id/{VANITY}/games?tab=all&xml=1 or
+https://steamcommunity.com/profiles/{STEAM64}/games?tab=all&xml=1
+
+Pass 1 Scope (Libraries Only)
+
+Include all items returned (games, DLC, demos, tools, soundtracks); no filtering by type in Pass 1.
+
+Aggregate over seed + up to 5 selected friends whose libraries are accessible.
+
+Do not compute per-game “last played” (added in Pass 2).
+
+Hours kept in hours, rounded/displayed to 1 decimal place.
+
+Output (CSV + UI)
+
+Auto-save CSV (no download button):
+./output/libraries_{YYYY-MM-DD_HH-MM}_seed-{seed_sanitized}.csv
+
+CSV headers (snake_case, exact):
+appid, name, family_playtime_forever_h, family_playtime_recent_h, owners_count
+
+Default sort (both in UI table and in saved CSV):
+family_playtime_forever_h descending.
+
+UI table is sortable (click headers, toggles asc/desc) and has a single text filter (contains match on name or appid). Use minimal vanilla JS (no heavy grid library).
+
+Web UI Behavior
+
+Page 1 (index): Seed input, CSV upload, and “Load friends”.
+
+Friends list view:
+
+Show friend entries with checkbox, display name, and (once checked) an inline access badge.
+
+Immediate access validation on selection: when a checkbox is toggled on, call an endpoint that checks the library XML is accessible (HTTP 200 + parseable, even if empty). Show “OK” or “Not accessible”.
+
+Hard-enforce max 5 checked friends (disable other checkboxes and show a small message when the limit is reached).
+
+If a selected friend is not accessible, keep them selected but mark as “Excluded at run”.
+
+Seed rules:
+
+If seed library is not accessible: show a banner but proceed with any accessible friends.
+
+Run button:
+
+If no accessible profiles at all (seed + selected): block run with a clear error and no CSV is written.
+
+Otherwise, execute Pass 1, then render the results table (no progress bar).
+
+Aggregation Rules
+
+For each accessible user, fetch XML and parse rows (per <game>):
+
+Fields: <appID>, <name>, <hoursOnRecord>, <hoursLast2Weeks>
+
+Treat missing numbers as 0. Parse localized hour strings robustly (e.g., strip text like “hrs on record”, handle commas/periods).
+
+Group by appid across all included users.
+
+name: take the first name value encountered for that appid.
+
+family_playtime_forever_h: sum of all users’ total hours.
+
+family_playtime_recent_h: sum of last 2 weeks hours.
+
+owners_count: distinct user count for that app.
+
+Round the two hour fields to one decimal place.
+
+Concurrency, Rate Limits, Reliability
+
+Max concurrency: 3 in-flight HTTP calls to steamcommunity.com.
+
+Base delay: ~0.8 s per host between calls; add small jitter.
+
+Backoff: On 429 or 5xx, exponential backoff with jitter up to 60 s, then retry (bounded retries).
+
+Timeouts: reasonable per request (e.g., 15 s connect/read).
+
+Retry policy: retry idempotent GETs; skip on repeated failure with a UI note but continue the run.
+
+Deduplication: dedupe users by steam64 (resolve any vanities in the upload file; either column may be blank).
+
+Error Handling & UX
+
+Show concise, inline messages; never crash the server.
+
+If a user’s friends page or XML fails to parse, note it in UI and continue.
+
+If seed can’t be resolved (bad vanity), show a clear error.
+
+If the run completes with some friends excluded, show a banner summarizing how many profiles were included vs excluded (UI message only; no run.json persisted).
+
+Security & Packaging
+
+No external network dependencies for UI (bundle HTMX locally or inline).
+
+Serve only on 127.0.0.1, default port 8765.
+
+Provide requirements.txt and a minimal README.md with:
+
+Setup: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+
+Run: python app.py → open http://127.0.0.1:8765
+
+Optional CLI usage.
+
+Keep code in a small structure, e.g.:
+
+app.py
+/static/ (local htmx, minimal JS, CSS)
+/templates/ (Jinja2)
+/output/ (CSV files)
+/steam/ __init__.py, clients.py, parsers.py, aggregate.py, rate_limit.py, util.py
+requirements.txt
+README.md
+
+Core Components (design suggestions)
+
+steam/clients.py
+
+resolve_steam64(seed_str) -> str
+
+fetch_friends(steam64) -> list[Friend]
+
+check_library_access(user_id) -> bool
+
+fetch_library(user_id) -> list[GameRow]
+
+steam/parsers.py
+
+Robust HTML/XML parsing for pages above (lxml).
+
+parse_hours(text: str) -> float (handles “123 hrs”, 123.5, 123,5, missing).
+
+steam/aggregate.py
+
+aggregate(games_by_user: dict[user_id, list[GameRow]]) -> list[AggRow]
+
+Sorting by family_playtime_forever_h desc.
+
+steam/rate_limit.py
+
+Simple per-host gate with base delay + jitter; decorator for backoff on status codes.
+
+steam/util.py
+
+is_steam64(s: str) -> bool, slugify(s: str) -> str, unique_by_steam64(rows)
+
+library_url(id_or_vanity), friends_url(id_or_vanity)
+
+Flask routes:
+
+GET / → seed + upload form.
+
+POST /load_friends → resolve seed → scrape friends → render list.
+
+POST /check_access → given friend id, return small HTML snippet (“OK” / “Not accessible”).
+
+POST /run → execute Pass 1, write CSV, return results view.
+
+UI:
+
+Minimal HTML/CSS; HTMX for partials.
+
+Tiny inline JS: header-sort (toggle asc/desc), single text filter on appid and name.
+
+Acceptance Criteria
+
+Launching the app shows seed field and optional upload. Providing a valid seed loads the friends list with checkboxes.
+
+Selecting a friend immediately shows access status. After 5 are selected, other checkboxes are disabled.
+
+Running with:
+
+Accessible seed only → aggregates just the seed.
+
+Accessible friends only (seed private) → aggregates those friends; shows seed-private banner.
+
+None accessible → blocks with a clear error; no CSV created.
+
+After a successful run:
+
+A CSV appears at ./output/libraries_{timestamp}_seed-{seed}.csv.
+
+CSV rows are sorted by family_playtime_forever_h desc.
+
+The results table in the browser shows the same sort order, supports header click-sorting, and a text filter box.
+
+Concurrency and backoff behavior is observable in logs; no unhandled exceptions.
+
+Notes for Future Pass 2 (context only)
+
+Add per-appid store metadata, types/genres, and last_played_anyone. Pass 1 must not depend on this.
+
+Build exactly this Pass 1. Keep it lean and reliable.
+ChatGPT said:
+
+Thought for 26s
+Steam Family Library Aggregator – Pass 1 (flask + Htmx)
+· other
+# Project layout
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+## Run (Web UI)
+```bat
+python app.py
+```
+Then open: http://127.0.0.1:8765
+
+> **Note about HTMX**: This project serves HTMX locally from `static/htmx.min.js`. If the minified file appears truncated, replace it with the official file from https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js (save it to `static/htmx.min.js`). No CDNs are used at runtime.
+
+## Optional CLI (no UI)
+Aggregate without the browser:
+```bat
+python app.py --no-ui --seed <vanity|steam64> [--input-csv path]
+```
+- CSV must have headers: `vanity,steam64_id`
+- CLI respects the same access rules; includes seed (if accessible) + first 5 accessible friends/CSV entries.
+
+## Input Notes
+- Web form seed accepts **vanity** (e.g., `gaben`) or **steam64**.
+- Optional CSV upload: headers `vanity,steam64_id`. Either column may be blank; vanities are resolved.
+- Deduplication is by `steam64`.
+
+## Output Columns (snake_case)
+- `appid`
+- `name`
+- `family_playtime_forever_h` (hours, 1 decimal)
+- `family_playtime_recent_h` (hours, 1 decimal)
+- `owners_count`
+
+Sorted by `family_playtime_forever_h` **descending** in both CSV and UI.
+
+## Networking Etiquette
+- Concurrency: 3 workers max
+- Base delay: ~0.8s per host (+ jitter)
+- Backoff: Exponential with jitter up to 60s on 429/5xx; idempotent GETs retried
+- Timeouts: 15s connect/read
+
+## Security
+- Serves only on `127.0.0.1:8765`
+- No API keys; public endpoints only
+- No external UI dependencies (HTMX is local)
+
+## Folder Structure
+```
+app.py
+/static/ (htmx.min.js, app.js, app.css)
+/templates/ (Jinja2)
+/output/
+/steam/ (__init__.py, clients.py, parsers.py, aggregate.py, rate_limit.py, util.py)
+```
+
+## Future Pass 2 (not included)
+- Fetch store metadata, types/genres
+- Compute per-game `last_played_anyone`
+```
+
+---
+# requirements.txt
+```text
+Flask==3.0.3
+requests==2.32.3
+lxml==5.2.2
+
+Boom — Pass 1 is built. I dropped a complete, lean Flask + HTMX app into the canvas with the exact structure and behavior you specified (local-only, no API keys, CSV output + sortable/filterable table, immediate access checks, concurrency/backoff, etc.).
+
+Highlights:
+
+Resolves vanity → steam64 via ?xml=1
+
+Scrapes friends with ajax pagination
+
+Checks library access on checkbox toggle (shows “OK / Not accessible”)
+
+Enforces a hard limit of 5 selected friends in the UI
+
+Aggregates seed + selected accessible friends, writes CSV sorted by family_playtime_forever_h desc
+
+Polite networking: max 3 inflight, ~0.8s host delay, retries with exponential backoff, 15s timeouts
+
+Graceful error banners; partial failures won’t crash the run
+
+CLI mode included (optional) for no-UI runs
+
+Run it:
+
+create venv & install deps
+python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+
+start the app
+python app.py
+then open http://127.0.0.1:8765
+
+Note: I bundled a stub of static/htmx.min.js. Replace it with the official minified file (same filename) if you want the full library; the README points exactly where to grab it.
+
+Want me to tweak the friend list pagination heuristic, or wire in a tiny spinner on the access checks?
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info.
