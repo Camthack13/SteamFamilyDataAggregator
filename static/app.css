@@ -1,0 +1,32 @@
+:root { --bg:#0f1115; --fg:#e6e6e6; --muted:#a0a0a0; --card:#1a1d24; --accent:#5b9cff; --bad:#d96a6a; --ok:#6ad98b; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+header, footer { padding:12px 16px; background:#0b0d11; border-bottom:1px solid #20242c; }
+main { padding:16px; }
+.card { background:var(--card); padding:16px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,.3); max-width:900px; margin:0 auto 16px; }
+label { display:block; margin-bottom:6px; color:var(--muted); }
+input[type=text], input[type=file] { width:100%; padding:10px; border-radius:8px; border:1px solid #2a2f3a; background:#12151b; color:var(--fg); }
+.actions { margin-top:12px; }
+button { background:var(--accent); color:#fff; border:0; padding:10px 14px; border-radius:8px; cursor:pointer; }
+.small { color:var(--muted); font-size:12px; }
+.flash > div { padding:8px 12px; border-radius:8px; margin-bottom:8px; }
+.flash-error { background:#3b1f24; color:#f6cbd2; }
+.flash-warn { background:#3b2f1f; color:#f3e0c5; }
+.flash-info { background:#1f3024; color:#cfead6; }
+
+.friends { list-style:none; padding:0; margin:0; }
+.friends li { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #22262f; }
+.friends .name { font-weight:600; }
+.badge { padding:2px 8px; border-radius:999px; font-size:12px; background:#333; color:#bbb; }
+.badge.ok { background:#1f3b2a; color:#9fe4b3; }
+.badge.bad { background:#3b2424; color:#f0b1b1; }
+.badge.error { background:#3b2a1f; color:#f2d1ad; }
+.hidden { display:none; }
+.muted { color:var(--muted); font-size:12px; margin-bottom:8px; }
+
+#results { width:100%; border-collapse:collapse; margin-top:10px; }
+#results th, #results td { padding:8px; border-bottom:1px solid #232834; }
+#results th { text-align:left; cursor:pointer; user-select:none; }
+#results th.sorted.asc::after { content:" \25B2"; }
+#results th.sorted.desc::after { content:" \25BC"; }
+#results td.num { text-align:right; }

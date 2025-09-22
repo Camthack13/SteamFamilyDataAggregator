@@ -113,3 +113,83 @@ Your primary goal is to interview a user to understand a specific project or tas
 
 
 More thoughts. before I stop. I don't know if I want to write this all as one super project in one language or sepreate the pieces and use the strengths of each language. I will probably write the data collection in java script but I don't think I want to write the data analytics in java script.
+
+pass 1 readme
+
+# Steam Family Library Aggregator — Pass 1
+
+Local-only Flask app that aggregates Steam libraries for a seed user plus up to 5 selected friends using **public Steam Community endpoints** (no API keys). Writes a CSV and shows a sortable/filterable table.
+
+## Features
+- Resolve vanity → steam64 from `https://steamcommunity.com/id/{vanity}?xml=1`
+- Scrape friends list (pagination & ajax) from profile friends pages
+- Fetch per-user **games XML** and aggregate across users (all items included; no type filters in Pass 1)
+- Respectful networking: max concurrency 3 (per session), ~0.8s per-host delay + jitter, exponential backoff for 429/5xx
+- Robust hour parsing (`123`, `123.5`, `123,5`, phrases like `123 hrs on record`)
+- Graceful error banners; partial failures don’t crash the run
+- CSV auto-saved as `./output/libraries_{YYYY-MM-DD_HH-MM}_seed-{seed_sanitized}.csv`
+- UI: pick up to 5 friends with instant access check, results table supports header click-sorting and a single text filter
+
+## Requirements
+- Python 3.11
+- Windows 10/11 (tested), cross-platform expected
+
+## Setup
+```bat
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+## Run (Web UI)
+```bat
+python app.py
+```
+Then open: http://127.0.0.1:8765
+
+> **Note about HTMX**: This project serves HTMX locally from `static/htmx.min.js`. If the minified file appears truncated, replace it with the official file from https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js (save it to `static/htmx.min.js`). No CDNs are used at runtime.
+
+## Optional CLI (no UI)
+Aggregate without the browser:
+```bat
+python app.py --no-ui --seed <vanity|steam64> [--input-csv path]
+```
+- CSV must have headers: `vanity,steam64_id`
+- CLI respects the same access rules; includes seed (if accessible) + first 5 accessible friends/CSV entries.
+
+## Input Notes
+- Web form seed accepts **vanity** (e.g., `gaben`) or **steam64**.
+- Optional CSV upload: headers `vanity,steam64_id`. Either column may be blank; vanities are resolved.
+- Deduplication is by `steam64`.
+
+## Output Columns (snake_case)
+- `appid`
+- `name`
+- `family_playtime_forever_h` (hours, 1 decimal)
+- `family_playtime_recent_h` (hours, 1 decimal)
+- `owners_count`
+
+Sorted by `family_playtime_forever_h` **descending** in both CSV and UI.
+
+## Networking Etiquette
+- Concurrency: 3 workers max
+- Base delay: ~0.8s per host (+ jitter)
+- Backoff: Exponential with jitter up to 60s on 429/5xx; idempotent GETs retried
+- Timeouts: 15s connect/read
+
+## Security
+- Serves only on `127.0.0.1:8765`
+- No API keys; public endpoints only
+- No external UI dependencies (HTMX is local)
+
+## Folder Structure
+```
+app.py
+/static/ (htmx.min.js, app.js, app.css)
+/templates/ (Jinja2)
+/output/
+/steam/ (__init__.py, clients.py, parsers.py, aggregate.py, rate_limit.py, util.py)
+```
+
+## Future Pass 2 (not included)
+- Fetch store metadata, types/genres
+- Compute per-game `last_played_anyone`

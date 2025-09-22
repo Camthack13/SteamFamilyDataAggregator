@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+  <h2>Results</h2>
+  <p>CSV saved to: <code>{{ csv_path }}</code></p>
+
+  <div class="row">
+    <input type="text" id="filter" placeholder="Filter by name or appid…" oninput="filterTable()">
+  </div>
+
+  <table id="results">
+    <thead>
+      <tr>
+        <th data-key="appid" onclick="sortTable(this)">appid</th>
+        <th data-key="name" onclick="sortTable(this)">name</th>
+        <th data-key="family_playtime_forever_h" data-type="num" onclick="sortTable(this)" class="sorted desc">family_playtime_forever_h</th>
+        <th data-key="family_playtime_recent_h" data-type="num" onclick="sortTable(this)">family_playtime_recent_h</th>
+        <th data-key="owners_count" data-type="num" onclick="sortTable(this)">owners_count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.appid }}</td>
+        <td>{{ r.name }}</td>
+        <td class="num">{{ '%.1f'|format(r.family_playtime_forever_h) }}</td>
+        <td class="num">{{ '%.1f'|format(r.family_playtime_recent_h) }}</td>
+        <td class="num">{{ r.owners_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

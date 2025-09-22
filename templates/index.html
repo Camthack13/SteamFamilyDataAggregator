@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<form action="{{ url_for('load_friends') }}" method="post" enctype="multipart/form-data" class="card">
+  <label>Seed user (vanity or 64-bit SteamID)</label>
+  <input type="text" name="seed" placeholder="e.g. gaben or 76561198000000000">
+
+  <div class="row">
+    <div>
+      <label>Optional CSV upload</label>
+      <input type="file" name="csv" accept=".csv">
+      <small>Headers: <code>vanity,steam64_id</code></small>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button type="submit">Load friends</button>
+  </div>
+</form>
+{% endblock %}
