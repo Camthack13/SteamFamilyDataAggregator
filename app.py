@@ -135,6 +135,27 @@ def check_access():
     SESSION_STATE["access_checked"][steam64] = ok
     return render_template("_badge.html", status=("ok" if ok else "bad"), text=("OK" if ok else "Not accessible"))
 
+@app.post("/confirm_selection")
+def confirm_selection():
+    selected = request.form.getlist('friend')
+    selected = list(dict.fromkeys([s for s in selected if s]))
+
+    accessible, inaccessible = [], []
+    for s64 in selected:
+        st = SESSION_STATE["access_checked"].get(s64)
+        if st is None:
+            try:
+                st = check_library_access(s64)
+            except Exception:
+                st = False
+            SESSION_STATE["access_checked"][s64] = st
+        (accessible if st else inaccessible).append(s64)
+
+    seed64 = SESSION_STATE.get("seed64")
+    seed_access = SESSION_STATE.get("seed_accessible")
+    return render_template("_confirm.html",
+                           seed64=seed64, seed_access=seed_access,
+                           accessible=accessible, inaccessible=inaccessible)
 
 @app.post("/run")
 def run_pass1():

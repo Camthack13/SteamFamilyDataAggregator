@@ -17,6 +17,12 @@ document.addEventListener('change', (e) => {
 
 document.addEventListener('DOMContentLoaded', updateFriendCheckboxes);
 
+document.addEventListener('click', (e) => {
+  const modal = document.getElementById('modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (e.target === modal) modal.classList.add('hidden');
+});
+
 // Simple client-side table sort + filter
 let sortState = { key: 'family_playtime_forever_h', dir: 'desc' };
 

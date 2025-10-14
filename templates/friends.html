@@ -3,38 +3,45 @@
 <div class="card">
   <h2>2) Pick up to 5 friends</h2>
   {% if seed64 %}
-    <p>Seed: <code>{{ seed64 }}</code> — Library access: <strong>{{ 'OK' if seed_access else 'Not accessible' }}</strong></p>
+  <p>Seed: <code>{{ seed64 }}</code> — Library access: <strong>{{ 'OK' if seed_access else 'Not accessible' }}</strong>
+  </p>
   {% else %}
-    <p>No seed resolved. You can still select friends from CSV or list below if any.</p>
+  <p>No seed resolved. You can still select friends from CSV or list below if any.</p>
   {% endif %}
 
   {% if not friends %}
-    <p>No friends found/parsed. You may go back and upload a CSV.</p>
+  <p>No friends found/parsed. You may go back and upload a CSV.</p>
   {% else %}
   <form action="{{ url_for('run_pass1') }}" method="post" id="friends-form">
     <div id="limit-note" class="muted hidden">Max 5 friends selected.</div>
     <ul class="friends">
       {% for f in friends %}
-        <li>
-          <label>
-            <input type="checkbox" name="friend" value="{{ f.steam64 }}"
-                   hx-post="{{ url_for('check_access') }}"
-                   hx-include="closest li"
-                   hx-target="#badge-{{ f.steam64 }}"
-                   hx-swap="outerHTML"
-                   class="friend-checkbox">
-            <span class="name">{{ f.name }}</span>
-            <span class="small">({{ f.steam64 }})</span>
-          </label>
-          <input type="hidden" name="steam64" value="{{ f.steam64 }}">
-          <span id="badge-{{ f.steam64 }}" class="badge">—</span>
-        </li>
+      <li>
+        <label>
+          <input type="checkbox" name="friend" value="{{ f.steam64 }}" hx-post="{{ url_for('check_access') }}"
+            hx-include="closest li" hx-target="#badge-{{ f.steam64 }}" hx-swap="outerHTML"
+            hx-indicator="#indicator-{{ f.steam64 }}" class="friend-checkbox">
+          <span class="name">{{ f.name }}</span>
+          <span class="small">({{ f.steam64 }})</span>
+        </label>
+        <input type="hidden" name="steam64" value="{{ f.steam64 }}">
+        <span id="badge-{{ f.steam64 }}" class="badge">—</span>
+        <span id="indicator-{{ f.steam64 }}" class="htmx-indicator badge spinning" title="Checking…">⏳</span>
+      </li>
       {% endfor %}
     </ul>
 
-    <div class="actions">
-      <button type="submit" id="run-btn">Run Pass 1</button>
-    </div>
+    <div class="actions" style="display:flex; gap:8px; align-items:center;">
+  <button type="button"
+          hx-post="{{ url_for('confirm_selection') }}"
+          hx-include="#friends-form"
+          hx-target="#modal"
+          hx-swap="innerHTML"
+          onclick="document.getElementById('modal').classList.remove('hidden')">
+    Confirm selection
+  </button>
+  <button type="submit" id="run-btn">Run Pass 1</button>
+</div>
   </form>
   {% endif %}
 </div>

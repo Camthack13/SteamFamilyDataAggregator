@@ -17,27 +17,35 @@ def parse_steam64_from_vanity_xml(xml_bytes: bytes) -> Tuple[str|None, str|None]
         return None, f"XML parse error: {e}"
 
 
-def parse_friends(html_bytes: bytes) -> List[dict]:
+def parse_friends(html_bytes: bytes) -> list[dict]:
+    from lxml import html
+    import re
+
     doc = html.fromstring(html_bytes)
-    out = []
-    # data-steamid attributes are reliable
-    for el in doc.cssselect('[data-steamid]'):
+    out: list[dict] = []
+
+    # Any element with data-steamid
+    for el in doc.xpath('//*[@data-steamid]'):
         s64 = el.get('data-steamid')
-        # Try to find a visible name nearby
-        name = el.text_content().strip() or s64
-        out.append({"steam64": s64, "name": name})
-    # Fallback: anchors with steam profiles
+        if not s64:
+            continue
+        text = (el.text or '').strip()
+        if not text:
+            texts = [t.strip() for t in el.xpath('.//text()') if t.strip()]
+            text = texts[0] if texts else s64
+        out.append({"steam64": s64, "name": text})
+
+    # Fallback: links that look like profile URLs
     if not out:
         for a in doc.xpath('//a[contains(@href, "/profiles/") or contains(@href, "/id/")]'):
             s64 = a.get('data-steamid') or ''
             if not s64:
-                # try to pull from href when it's /profiles/<id>
                 href = a.get('href') or ''
                 m = re.search(r"/profiles/([0-9]{17})", href)
                 if m:
                     s64 = m.group(1)
             if s64:
-                name = a.text_content().strip() or s64
+                name = (a.text_content() or '').strip() or s64
                 out.append({"steam64": s64, "name": name})
     return out
 
@@ -58,11 +66,11 @@ def parse_hours(text: str|None) -> float:
         return 0.0
 
 
-def parse_library_xml(xml_bytes: bytes) -> List[dict]:
+def parse_library_xml(xml_bytes: bytes) -> list[dict]:
     out = []
     root = etree.fromstring(xml_bytes)
-    # gamesList/games/game
-    for g in root.findall('.//gamesList/games/game'):
+    # Be flexible: some profiles nest differently; just find any <game> nodes
+    for g in root.findall('.//game'):
         appid = (g.findtext('appID') or '').strip()
         name = (g.findtext('name') or '').strip()
         hours_all = parse_hours(g.findtext('hoursOnRecord'))
